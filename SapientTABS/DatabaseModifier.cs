@@ -4,26 +4,142 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using Newtonsoft.Json;
 using UnityEngine;
-
 using Landfall.TABS;
+
+using SapientTABS.ExternalData;
 
 namespace SapientTABS
 {
+    /*
+        First, add reference to the SapientTABS.dll file.
+
+        Then, this using statement at the top:
+
+	        using SapientTABS;
+
+        At the very end of the InitializeDatabase() method, place this code:
+
+	        new DatabaseModifier().ModifyDatabase();
+     */
+    /*
+        Have good error handling, especially when we load the JSON - make that easy. Write to a log file 
+        that has a known location and provide as many details as possible, including helpful ideas for 
+        fixing. Don't just spit out errors, say things like "This is likely caused by leaving out part of 
+        the Faction's JSON structure" or whatever.... 
+
+        Of course, we want to eventually provide a nice UI for creating the JSON (make it a website for 
+        portability and to drive traffic) so that the user doesn't have to learn it on their own         
+    */
     public class DatabaseModifier
     {
+        private readonly LandfallUnitDatabase m_Database;
+        private SapientTABSData m_SapientTABSData;
+
         public static List<int> factionsCreatedNames = new List<int>();
 
-        public void ModifyDatabase(LandfallUnitDatabase database)
+        public DatabaseModifier()
         {
+            m_Database = LandfallUnitDatabase.GetDatabase();
+            m_SapientTABSData = new SapientTABSData();
+        }
+
+        public void ModifyDatabase()
+        {
+            try
+            {
+                var jsonPath = System.IO.Path.Combine(Application.dataPath, "SapientTABS.json");
+#if DEBUG
+                // create and write JSON for test data
+                //
+                //m_SapientTABSData.Factions.Add(new SapientFaction("BeyBlades", "BeyBlades"));
+                //m_SapientTABSData.Factions.Add(new SapientFaction("Talmage", "TalmageDude"));
+                //string json = JsonConvert.SerializeObject(m_SapientTABSData, Formatting.Indented);
+                //System.IO.File.WriteAllText(jsonPath, json);
+#endif
+                // get file
+                var json = System.IO.File.ReadAllText(jsonPath);
+                if (string.IsNullOrWhiteSpace(json)) return;
+
+                m_SapientTABSData = JsonConvert.DeserializeObject<SapientTABSData>(json);
+
+                Utilities.Log(string.Format("PinaCollada.directory: {0}", PinaCollada.directory), "SapientTABS.DatabaseModifier.log");
+                CreateFactions(m_SapientTABSData.Factions);
+
+                //UManager.CreateNewUnit("Blood King", database.Units[71].Entity.GUID);
+            }
+            catch(Exception ex)
+            {
+                Utilities.Log(ex.ToString());
+            }
             // read json data structure from external file
+            // since factions always include units that belong to them, should we have the 
+            // Faction aggregate units, or only reference them? Should units aggregate weapons, 
+            // or only reference them? If a given unit uses a specific weapon, that doesn't 
+            // mean another unit would use the weapon in the same way - in a sense, that weapon 
+            // is different for a different unit
+
+            //var jsonPath = System.IO.Path.Combine(Application.dataPath, "SapientTABS.json");
+
+
+            // for each Item, we read the string data and do what we need to do here
+
+
+            //UManager.CreateNewFaction("Egypt", database.Units[71].Entity.SpriteIcon);
+            //UManager.CreateNewFaction("Unknown", PinaCollada.GetSprite("monkyicon"));
+            //UManager.CreateNewFaction("Soviet Union", PinaCollada.GetSprite("sovietpeasanticon"));
+            //UManager.CreateNewFaction("Modern", PinaCollada.GetSprite("shotgunicon"));
 
             // use it to modify the database
             //database
         }
 
-        public static void CreateNewFaction(LandfallUnitDatabase database, string name, Sprite icon)
+
+
+
+        private void CreateFactions(List<SapientFaction> factions)
         {
+            foreach (var faction in factions)
+            {
+                Utilities.Log(string.Format("Trying to create faction: {0} using sprite icon name: {1}", faction.Name, faction.SpriteIconName), "SapientTABS.DatabaseModifier.log");
+                CreateNewFaction(faction.Name, GetSprite(faction.SpriteIconName));
+            }
+        }
+
+        private Sprite GetSprite(string spriteName)
+        {
+            Sprite sprite = null;
+            int unitIndex = 0;
+            if (int.TryParse(spriteName, out unitIndex))
+            {
+                sprite = m_Database.UnitList.ToArray()[unitIndex].Entity.SpriteIcon;
+            }
+            else
+            {
+                /* 
+                 * It might be useful to allow for passing a string like 
+                 * "database.Units[71].Entity.SpriteIcon" so that we can 
+                 * support a transitioning piece of functionality from 
+                 * currently-used idioms in existing mods but for now we 
+                 * will throw an error - we'd probably provide an overload
+                 * that looks like this:
+                 * GetSprite(CollectionType type, int index) where CollectionType was an enum of Factions, Units or Weapons
+                 * 
+                 */
+                if (spriteName.Contains(".") && spriteName.Contains("["))
+                {
+                    throw new Exception("Fully-qualified object graph path names for Icons are not currently supported.");
+                }
+                Utilities.Log(string.Format("Trying to get sprite by name: {0}", spriteName));
+                sprite = PinaCollada.GetSprite(spriteName);
+            }
+            return sprite;
+        }
+
+        public void CreateNewFaction(string name, Sprite icon)
+        {
+            Utilities.Log($"Sprite icon null? {(icon == null).ToString()}", "SapientTABS.DatabaseModifier.log");
             Faction faction = new Faction();
             faction.Init();
             faction.Units = new UnitBlueprint[0];
@@ -32,17 +148,19 @@ namespace SapientTABS
             faction.name = name;
             faction.m_displayFaction = true;
 
-            // make sure there isn't a faction by this name, otherwise simply return existing?
+            // make sure there isn't a faction by this name already - which is a good check since the JSON is user-created
             if (!factionsCreatedNames.Contains(faction.Entity.GUID.m_ID))
             {
                 factionsCreatedNames.Add(faction.Entity.GUID.m_ID);
-                faction.index++; // += factionsCreatedNames.Count;
+                faction.index++; // old code was: += factionsCreatedNames.Count;
 
                 //NOTE: I don't think we really need the following line, but it's a nice thought - 
                 //database.Factions.Add(faction);
-                database.AddFactionWithID(faction);
+                m_Database.AddFactionWithID(faction);
+                Utilities.Log($"Faction seems to have been added for {name}", "SapientTABS.DatabaseModifier.log");
             }
         }
+
     }
 }
 /*
